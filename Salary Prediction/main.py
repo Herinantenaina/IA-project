@@ -9,16 +9,30 @@ df = pd.read_csv('survey_results_public.csv')
 # Keep the rows where ConvertedCompYearly is not missing
 df = df.dropna(subset='ConvertedCompYearly')
 
+# DROP these — free text write-ins, leakage, IDs 
+drop_cols = [
+    'ResponseId',
+    'CompTotal', 'Currency', 'AIExplain',
+    'TechEndorse_13_TEXT', 'TechOppose_15_TEXT',
+    'JobSatPoints_15_TEXT', 'SO_Actions_15_TEXT',
+    'AIAgentKnowWrite', 'AIAgentOrchWrite',
+    'AIAgentObsWrite', 'AIAgentExtWrite', 'AIOpen',
+    'CommPlatformHaveEntr', 'CommPlatformWantEntr',
+]
+
+# DROP sparse columns >70% null
+sparse_cols = df.columns[df.isnull().mean() > 0.7].tolist()
+
+df = df.drop(columns=drop_cols + sparse_cols)
+print(len(df.columns))
+
 # Solve nan values
 if df['ConvertedCompYearly'].isna().any():
     median = df['ConvertedCompYearly'].median()
     df['ConvertedCompYearly'] = df['ConvertedCompYearly'].fillna(median)
-    
-# Keep the rows where ConvertedCompYearly is between 10,000 and 500,000 (outliers problems) 
-df = df[
-    (df['ConvertedCompYearly'] >= 10_000)
-    & (df['ConvertedCompYearly'] <= 500_000)
-    ]
+
+# Normalization
+df['Salary'] = np.log1p(df['ConvertedCompYearly'])
 
 # Int-ify the Age column
 def age_to_int(age):
@@ -36,7 +50,24 @@ def age_to_int(age):
     
     return np.nan
 
-df['Age'] = df['Age'].apply(age_to_int)
+df['Age_int'] = df['Age'].apply(age_to_int)
 
+if df['YearsCode'].isna().any():
+    median = df['YearsCode'].median()
+    df['YearsCode'] = df['YearsCode'].fillna(median)
+  
+multi_value = [ 
+    col for col in df.select_dtypes(include='object').columns
+    if df[col].dropna().str.contains(';').any()
+]
 
-df
+single_value = [
+    col for col in df.select_dtypes(include='object').columns
+    if col not in multi_value
+]
+
+print(f"Multi-value columns ({len(multi_value)}):")
+print(multi_value)
+
+print(f"\nSingle-value columns ({len(single_value)}):")
+print(single_value)
