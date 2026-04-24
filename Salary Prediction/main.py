@@ -202,6 +202,8 @@ importances = pd.Series(
     index=X_train.columns
 ).sort_values(ascending=False)
 
+# Top 20
+print(importances.head(20))
 
 # Plot
 importances.head(20).plot(kind='barh', figsize=(8, 6))
@@ -221,3 +223,79 @@ cv_scores_reduced = cross_val_score(
     scoring='r2',
     n_jobs=-1
 )
+
+imputer = SimpleImputer(strategy='median')
+scaler = StandardScaler()
+
+X_train_np = imputer.fit_transform(X_train_reduced)
+X_train_np = scaler.fit_transform(X_train_np)
+
+X_test_np = imputer.transform(X_test_reduced)
+X_test_np = scaler.transform(X_test_np)
+
+# ── Convert to PyTorch tensors ────────────────────────────────
+X_train_t = torch.tensor(X_train_np, dtype=torch.float32)
+y_train_t = torch.tensor(y_train.values, dtype=torch.float32).unsqueeze(1)
+
+X_test_t = torch.tensor(X_test_np, dtype=torch.float32)
+y_test_t = torch.tensor(y_test.values, dtype=torch.float32).unsqueeze(1)
+
+# ── DataLoader ────────────────────────────────────────────────
+train_dataset = TensorDataset(X_train_t, y_train_t)
+train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
+
+class SalaryNet(nn.Module):
+    def __init__(self, input_dim):
+        super().__init__()
+        self.network = nn.Sequential(
+            nn.Linear(input_dim, 256),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(256, 128),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Linear(64, 1)
+        )
+    
+    def forward(self, x):
+        return self.network(x)
+
+input_dim = X_train_np.shape[1]
+model = SalaryNet(input_dim)
+print(model)
+
+criterion = nn.MSELoss()
+optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+
+epochs = 50
+for epoch in range(epochs):
+    model.train()
+    total_loss = 0
+
+    for X_batch, y_batch in train_loader:
+        optimizer.zero_grad()
+        y_pred = model(X_batch)
+        loss = criterion(y_pred, y_batch)
+        loss.backward()
+        optimizer.step()
+        total_loss += loss.item()
+
+    if (epoch + 1) % 10 == 0:
+        # Check validation loss every 10 epochs
+        model.eval()
+        with torch.no_grad():
+            val_pred = model(X_test_t)
+            val_loss = criterion(val_pred, y_test_t)
+        print(f"Epoch {epoch+1}/{epochs}  Train loss: {total_loss/len(train_loader):.4f}  Val loss: {val_loss:.4f}")
+
+model.eval()
+with torch.no_grad():
+    y_pred_nn = model(X_test_t).numpy().flatten()
+
+nn_r2 = r2_score(y_test, y_pred_nn)
+nn_mae = mean_absolute_error(np.expm1(y_test), np.expm1(y_pred_nn))
+
+print(f"\nNeural Network Test R²:  {nn_r2:.3f}")
+print(f"Neural Network MAE:      ${nn_mae:,.0f}")
