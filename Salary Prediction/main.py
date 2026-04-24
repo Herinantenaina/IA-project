@@ -1,13 +1,19 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import torch
+import torch.nn as nn
 
+from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, TensorDataset
+from xgboost import XGBRegressor
 from collections import Counter
 from sklearn.preprocessing import MultiLabelBinarizer, OrdinalEncoder, StandardScaler
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_absolute_error, r2_score
 
 def categorize_experience(years):
     if pd.isnull(years):
@@ -169,12 +175,49 @@ X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42, test_
 pipeline = Pipeline(steps=[
     ('imputer', SimpleImputer(strategy='median')),
     ('scaler', StandardScaler()),
-    ('model', LinearRegression()) 
+    ('model', XGBRegressor(
+        n_estimators=300,
+        learning_rate=0.05,
+        max_depth=6,
+        random_state=42,
+        n_jobs=-1
+    )) 
 ])
 
 pipeline.fit(X_train, y_train)
 
 y_pred = pipeline.predict(X_test)
 
-print("Train R²:", pipeline.score(X_train, y_train))
-print("Test R²:",  pipeline.score(X_test, y_test))
+cv_scores = cross_val_score(
+    pipeline,
+    X_train, y_train,
+    cv=5,               # 5 folds
+    scoring='r2',
+    n_jobs=-1           # use all CPU cores
+)
+
+model = pipeline.named_steps['model']
+importances = pd.Series(
+    model.feature_importances_,
+    index=X_train.columns
+).sort_values(ascending=False)
+
+
+# Plot
+importances.head(20).plot(kind='barh', figsize=(8, 6))
+
+# Keep only features with importance > 0
+useful_features = importances[importances > 0].index.tolist()
+print(f"Features with signal: {len(useful_features)} out of {X_train.shape[1]}")
+
+X_train_reduced = X_train[useful_features]
+X_test_reduced = X_test[useful_features]
+
+# Retrain and check if score improves
+cv_scores_reduced = cross_val_score(
+    pipeline,
+    X_train_reduced, y_train,
+    cv=5,
+    scoring='r2',
+    n_jobs=-1
+)
